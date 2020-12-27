@@ -9,6 +9,7 @@ There are two program parts:
 """
 
 
+import argparse
 import base64
 import csv
 import os
@@ -75,19 +76,17 @@ def log_write_folder(folder_write_name, folder_encode_name):
         )
 
 
-def jpg_encrypt():
+def jpg_encrypt(dir_input, dir_output, zip_pass, archive_flag):
     """
     Encrypt all folders in defined input path in .7z containers and hide
     them behind .jpg files.
     """
 
-    dir_input = "C:\\In"
-    dir_output = "C:\\Out\\"
-    dir_temporary = dir_output + "temp\\"
+    dir_temporary = os.sep.join([dir_output, "temp"])
     folder_creator(dir_output)
     folder_creator(dir_temporary)
     folder_clear(dir_temporary)
-    dir_picture = dir_output + "key.jpg"
+    dir_picture = os.sep.join([dir_output, "key.jpg"])
     img = Image.new("RGB", (100, 100), color="white")
     img.save(dir_picture)
 
@@ -104,15 +103,17 @@ def jpg_encrypt():
             "-md=32m",
             "-ms=on",
             "-v100m",
-            "-p{}".format("password"),
+            # "-p{}".format("password"),
         ]
+        command_compress.extend(["-p{}".format(zip_pass)])
         # Check whether the considered folder has been encrypted before (has been logged) and therefore has been backupped to Amazon Photos
-        if not log_find_folder(folder.name):
+        not_in_log = not log_find_folder(folder.name) if archive_flag else True
+        if not_in_log:
             # Create a multi volume 7z archive from the considered folder in the temp directory
             if folder.is_dir() and folder is not None:
                 try:
                     folder_encode = b64_encoder(folder.name)
-                    out_path = dir_temporary + folder_encode + r".7z"
+                    out_path = f"{dir_temporary}{os.sep}{folder_encode}.7z"
                     command_compress.extend([out_path, folder.path + r"\*"])
                     p = subprocess.Popen(
                         command_compress,
@@ -149,16 +150,14 @@ def jpg_encrypt():
             with alive_bar(len(list(os.scandir(dir_temporary)))) as bar:
                 for file in os.scandir(dir_temporary):
                     if file.is_file() and not file.name.endswith(".jpg"):
-                        folder_creator(dir_output + folder.name)
+                        folder_creator(f"{dir_output}{os.sep}{folder.name}")
                         # Open the 7z file in the temp directory and add the jpg
                         with open(file.path, "rb") as f_7z:
                             with open(dir_picture, "rb") as f_jpg:
                                 with open(
-                                    dir_output
-                                    + folder.name
-                                    + "\\"
-                                    + file.name
-                                    + r".jpg",
+                                    os.sep.join(
+                                        [dir_output, folder.name, file.name + ".jpg"]
+                                    ),
                                     "wb",
                                 ) as f_out:
                                     f_out.write(f_jpg.read())
@@ -166,7 +165,8 @@ def jpg_encrypt():
                     bar()
             folder_clear(dir_temporary)
             # Log the encrypted folder to the Encryption_log.csv
-            log_write_folder(folder.name, b64_encoder(folder.name))
+            if archive_flag:
+                log_write_folder(folder.name, b64_encoder(folder.name))
     # Remove temporary files
     if os.path.exists(dir_picture):
         os.remove(dir_picture)
@@ -174,10 +174,10 @@ def jpg_encrypt():
     print("Finished creating .jpg files")
 
 
-def jpg_decrypt():
+def jpg_decrypt(dir_input, zip_pass):
     """Extract the hidden .7z files from merged .jpg files and delete the .jpg files."""
 
-    dir_input = "C:\\Out\\"
+    # dir_input = "C:\\Out\\"
 
     # For all jpg files in the chosen directory, delete the first 823 bytes that make up the jpg to get a normal multi volume 7z archive
     for root, _, files in os.walk(dir_input):
@@ -217,8 +217,9 @@ def jpg_decrypt():
                         "7z",
                         "e",
                         "-y",
-                        "-p{}".format("  "),
+                        # "-p{}".format("  "),
                     ]
+                    command_extract.extend(["-p{}".format(zip_pass)])
                     file_path = os.path.join(root, file_name)
                     command_extract.extend([file_path, "-o" + root + "\\"])
                     p = subprocess.Popen(
@@ -230,21 +231,46 @@ def jpg_decrypt():
                     )
                     p.wait()
                     os.remove(file_path)
-            bar()
-
-
-def main():
-    """Choose between encryption and decryption."""
-    choice = input(
-        "Choose:\n1  Backup and encryption to jpg files\n2  File decryption and extraction\nYour choice: "
-    )
-    if choice == "1":
-        jpg_encrypt()
-    elif choice == "2":
-        jpg_decrypt()
-    else:
-        print("No correct input.")
+                bar()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="acd-photos-unlimited-backup",
+        epilog="Unlimited cloud storage and backup of all file types with Amazon Prime Photos. Choose between encryption and decryption.",
+    )
+    parser.add_argument(
+        "-p",
+        metavar="pass",
+        default="",
+        type=str,
+        help='password for encryption (default="")',
+    )
+    parser.add_argument(
+        "-a",
+        "--archive",
+        action="store_true",
+        help="after encryption write folders to log and skip previously logged folders",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "-e",
+        metavar="out",
+        help="encrypt all subfolders in the input folder - specify the output path",
+    )
+    group.add_argument(
+        "-d",
+        action="store_true",
+        help="decrypt all .jpg archives in the input folder",
+    )
+    parser.add_argument("input", help="input path")
+    args = parser.parse_args()
+
+    if args.e:
+        jpg_encrypt(
+            os.path.normpath(args.input), os.path.normpath(args.e), args.p, args.archive
+        )
+    elif args.d:
+        jpg_decrypt(os.path.normpath(args.input), args.p)
+    else:
+        print("No arguments. Closing.")
